@@ -1,58 +1,59 @@
-/*****************************************************************
- * Test Service – FINAL STABLE
- * Handles Daily / Weekly / Subject tests
- * NO Telegram code here
- *****************************************************************/
+// src/services/test.service.js
 
-const mcqRepo = require("../repositories/mcq.repo");
-const testRepo = require("../repositories/test.repo");
-const userRepo = require("../repositories/user.repo");
+export class TestService {
+  constructor({ testRepo, mcqRepo, userRepo }) {
+    this.testRepo = testRepo;
+    this.mcqRepo = mcqRepo;
+    this.userRepo = userRepo;
+  }
 
-class TestService {
-  /* ================= START TEST ================= */
-  async startTest(userId, type = "DAILY", subject = null, total = 20) {
-    const sessionId = `${type}_${Date.now()}`;
+  async startTest(userId, subject, limit = 10) {
+    const questions = await this.mcqRepo.getRandomBySubject(subject, limit);
 
-    const mcqs = subject
-      ? await mcqRepo.getBySubject(subject)
-      : await mcqRepo.getAll();
-
-    if (!mcqs || mcqs.length < total) {
+    if (!questions || questions.length === 0) {
       return {
         ok: false,
-        code: "INSUFFICIENT_MCQ",
-        message:
-          "❌ Not enough MCQs available for this test."
+        message: "No MCQs available for this subject"
       };
     }
 
-    const selected = this.shuffle(mcqs).slice(0, total);
-
-    await testRepo.createTestSession(userId, sessionId, {
-      type,
-      total,
+    const session = {
+      userId,
       subject,
-      questions: selected.map(q => q.id)
-    });
+      total: questions.length,
+      correct: 0,
+      wrong: 0,
+      startedAt: Date.now(),
+      completed: false
+    };
+
+    await this.testRepo.createSession(userId, session);
 
     return {
       ok: true,
-      code: "TEST_STARTED",
-      sessionId,
-      questions: selected
+      questions
     };
   }
 
-  /* ================= SUBMIT ANSWER ================= */
-  async submitAnswer(userId, sessionId, question, userAnswer) {
-    const isCorrect = userAnswer === question.answer;
+  async submitAnswer(userId, isCorrect) {
+    const session = await this.testRepo.getActiveSession(userId);
+    if (!session) return null;
 
-    await testRepo.saveAnswer(userId, sessionId, question.id, userAnswer);
-    await testRepo.updateScore(userId, sessionId, isCorrect);
+    if (isCorrect) session.correct++;
+    else session.wrong++;
 
-    return {
-      correct: isCorrect,
-      correctAnswer: question.answer,
-      explanation: question.explanation,
-      subject: question.subject
-    };
+    await this.testRepo.updateSession(userId, session);
+    return session;
+  }
+
+  async endTest(userId) {
+    const session = await this.testRepo.getActiveSession(userId);
+    if (!session) return null;
+
+    session.completed = true;
+    session.endedAt = Date.now();
+
+    await this.testRepo.finishSession(userId, session);
+    return session;
+  }
+  }
