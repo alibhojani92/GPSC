@@ -1,89 +1,58 @@
-// Test Service
-// Handles: test creation, MCQ selection, answer evaluation (no Telegram logic)
+/*****************************************************************
+ * Test Service – FINAL STABLE
+ * Handles Daily / Weekly / Subject tests
+ * NO Telegram code here
+ *****************************************************************/
 
-import { McqRepository } from "../repositories/mcq.repo.js";
-import { TestRepository } from "../repositories/test.repo.js";
-import { logger } from "./logger.js";
+const mcqRepo = require("../repositories/mcq.repo");
+const testRepo = require("../repositories/test.repo");
+const userRepo = require("../repositories/user.repo");
 
-export class TestService {
-  constructor(env) {
-    this.env = env;
-    this.mcqRepo = new McqRepository(env);
-    this.testRepo = new TestRepository(env);
-  }
+class TestService {
+  /* ================= START TEST ================= */
+  async startTest(userId, type = "DAILY", subject = null, total = 20) {
+    const sessionId = `${type}_${Date.now()}`;
 
-  /**
-   * Create a new test (daily / weekly / subject-wise)
-   */
-  async createTest({ userId, type, subject = null, limit }) {
     const mcqs = subject
-      ? await this.mcqRepo.getRandomBySubject(subject, limit)
-      : await this.mcqRepo.getRandom(limit);
+      ? await mcqRepo.getBySubject(subject)
+      : await mcqRepo.getAll();
 
-    if (!mcqs || mcqs.length === 0) {
-      throw new Error("No MCQs available for test");
+    if (!mcqs || mcqs.length < total) {
+      return {
+        ok: false,
+        code: "INSUFFICIENT_MCQ",
+        message:
+          "❌ Not enough MCQs available for this test."
+      };
     }
 
-    const test = {
-      id: crypto.randomUUID(),
-      userId,
-      type,
-      subject,
-      total: mcqs.length,
-      correct: 0,
-      wrong: 0,
-      startedAt: Date.now(),
-      completedAt: null
-    };
+    const selected = this.shuffle(mcqs).slice(0, total);
 
-    await this.testRepo.create(test);
-    logger.info("Test created", { testId: test.id, type, subject });
+    await testRepo.createTestSession(userId, sessionId, {
+      type,
+      total,
+      subject,
+      questions: selected.map(q => q.id)
+    });
 
     return {
-      testId: test.id,
-      mcqs
+      ok: true,
+      code: "TEST_STARTED",
+      sessionId,
+      questions: selected
     };
   }
 
-  /**
-   * Submit answer for a question
-   */
-  async submitAnswer(testId, questionId, answer) {
-    const test = await this.testRepo.getById(testId);
-    if (!test) throw new Error("Test not found");
+  /* ================= SUBMIT ANSWER ================= */
+  async submitAnswer(userId, sessionId, question, userAnswer) {
+    const isCorrect = userAnswer === question.answer;
 
-    const mcq = await this.mcqRepo.getById(questionId);
-    if (!mcq) throw new Error("MCQ not found");
-
-    const isCorrect = mcq.answer === answer;
-
-    await this.testRepo.recordAnswer({
-      testId,
-      questionId,
-      answer,
-      correct: isCorrect
-    });
-
-    await this.testRepo.updateScore(testId, isCorrect);
+    await testRepo.saveAnswer(userId, sessionId, question.id, userAnswer);
+    await testRepo.updateScore(userId, sessionId, isCorrect);
 
     return {
       correct: isCorrect,
-      explanation: mcq.explanation || "",
-      subject: mcq.subject
+      correctAnswer: question.answer,
+      explanation: question.explanation,
+      subject: question.subject
     };
-  }
-
-  /**
-   * Finish test
-   */
-  async finishTest(testId) {
-    const test = await this.testRepo.getById(testId);
-    if (!test) throw new Error("Test not found");
-
-    await this.testRepo.complete(testId, Date.now());
-
-    logger.info("Test finished", { testId });
-
-    return await this.testRepo.getSummary(testId);
-  }
-                               }
