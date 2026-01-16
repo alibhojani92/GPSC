@@ -1,1 +1,1 @@
-# GPSC.
+# GPSC
