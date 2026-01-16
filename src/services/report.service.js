@@ -1,99 +1,167 @@
-// Report Service
-// Handles: daily, weekly, monthly summaries for reading & tests
+// src/services/report.service.js
 
-import { ReadingRepository } from "../repositories/reading.repo.js";
+import { McqRepository } from "../repositories/mcq.repo.js";
 import { TestRepository } from "../repositories/test.repo.js";
-import { logger } from "./logger.js";
+import { ReadingRepository } from "../repositories/reading.repo.js";
+import { UserRepository } from "../repositories/user.repo.js";
+import { SUBJECTS } from "../config/subjects.js";
 
 export class ReportService {
   constructor(env) {
-    this.env = env;
-    this.readingRepo = new ReadingRepository(env);
+    this.mcqRepo = new McqRepository(env);
     this.testRepo = new TestRepository(env);
+    this.readingRepo = new ReadingRepository(env);
+    this.userRepo = new UserRepository(env);
   }
 
-  /**
-   * Daily report
-   */
-  async getDailyReport(userId, date) {
-    const readingMinutes = await this.readingRepo.getTotalMinutes(userId, date);
-    const tests = await this.testRepo.getTestsByDate(userId, date);
+  /* ==============================
+     BASIC HELPERS
+  ============================== */
 
-    return {
-      date,
-      readingMinutes,
-      tests,
-    };
+  getSubjectMap() {
+    const map = {};
+    SUBJECTS.forEach(s => (map[s.code] = s.name));
+    return map;
   }
 
-  /**
-   * Weekly report (last 7 days ending today)
-   */
-  async getWeeklyReport(userId, endDate) {
-    const dates = this._lastNDates(endDate, 7);
-    const report = [];
-
-    for (const date of dates) {
-      const daily = await this.getDailyReport(userId, date);
-      report.push(daily);
-    }
-
-    return report;
+  percent(part, total) {
+    if (!total || total === 0) return 0;
+    return Math.round((part / total) * 100);
   }
 
-  /**
-   * Monthly report (calendar month)
-   */
-  async getMonthlyReport(userId, year, month) {
-    const dates = this._datesOfMonth(year, month);
-    let totalReading = 0;
-    let testCount = 0;
+  /* ==============================
+     DAILY REPORT
+  ============================== */
+
+  async getDailyReport(userId, dateISO) {
+    const tests = await this.testRepo.getTestsByDate(userId, dateISO);
+    const reading = await this.readingRepo.getReadingByDate(userId, dateISO);
+
+    let totalQ = 0;
     let correct = 0;
-    let wrong = 0;
 
-    for (const date of dates) {
-      const daily = await this.getDailyReport(userId, date);
-      totalReading += daily.readingMinutes || 0;
-
-      for (const t of daily.tests || []) {
-        testCount++;
-        correct += t.correct || 0;
-        wrong += t.wrong || 0;
-      }
-    }
+    tests.forEach(t => {
+      totalQ += t.totalQuestions || 0;
+      correct += t.correct || 0;
+    });
 
     return {
-      year,
-      month,
-      totalReadingMinutes: totalReading,
-      totalTests: testCount,
-      correct,
-      wrong,
+      date: dateISO,
+      testsAttempted: tests.length,
+      totalQuestions: totalQ,
+      correctAnswers: correct,
+      accuracy: this.percent(correct, totalQ),
+      readingMinutes: reading?.minutes || 0
     };
   }
 
-  /* ================= Helpers ================= */
+  /* ==============================
+     WEEKLY / MONTHLY REPORT
+  ============================== */
 
-  _lastNDates(endDate, n) {
-    const dates = [];
-    const base = new Date(endDate);
+  async getRangeReport(userId, startISO, endISO) {
+    const tests = await this.testRepo.getTestsInRange(userId, startISO, endISO);
+    const readings = await this.readingRepo.getReadingInRange(
+      userId,
+      startISO,
+      endISO
+    );
 
-    for (let i = 0; i < n; i++) {
-      const d = new Date(base);
-      d.setDate(base.getDate() - i);
-      dates.push(d.toISOString().slice(0, 10));
-    }
-    return dates.reverse();
+    let totalQ = 0;
+    let correct = 0;
+    let readingMinutes = 0;
+
+    tests.forEach(t => {
+      totalQ += t.totalQuestions || 0;
+      correct += t.correct || 0;
+    });
+
+    readings.forEach(r => {
+      readingMinutes += r.minutes || 0;
+    });
+
+    return {
+      from: startISO,
+      to: endISO,
+      testsAttempted: tests.length,
+      totalQuestions: totalQ,
+      correctAnswers: correct,
+      accuracy: this.percent(correct, totalQ),
+      readingMinutes
+    };
   }
 
-  _datesOfMonth(year, month) {
-    const dates = [];
-    const start = new Date(year, month - 1, 1);
-    const end = new Date(year, month, 0);
+  /* ==============================
+     SUBJECT WISE PERFORMANCE
+  ============================== */
 
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      dates.push(d.toISOString().slice(0, 10));
-    }
-    return dates;
+  async getSubjectReport(userId) {
+    const tests = await this.testRepo.getAllTests(userId);
+    const subjectMap = this.getSubjectMap();
+
+    const stats = {};
+
+    tests.forEach(test => {
+      test.breakup?.forEach(b => {
+        if (!stats[b.subject]) {
+          stats[b.subject] = { total: 0, correct: 0 };
+        }
+        stats[b.subject].total += b.total || 0;
+        stats[b.subject].correct += b.correct || 0;
+      });
+    });
+
+    return Object.keys(stats).map(code => ({
+      subjectCode: code,
+      subjectName: subjectMap[code] || code,
+      totalQuestions: stats[code].total,
+      correctAnswers: stats[code].correct,
+      accuracy: this.percent(stats[code].correct, stats[code].total)
+    }));
   }
-}
+
+  /* ==============================
+     WEAK SUBJECT ANALYSIS
+  ============================== */
+
+  async getWeakSubjects(userId, threshold = 60) {
+    const subjectReport = await this.getSubjectReport(userId);
+
+    return subjectReport.filter(
+      s => s.totalQuestions >= 20 && s.accuracy < threshold
+    );
+  }
+
+  /* ==============================
+     USER PROGRESS SUMMARY
+  ============================== */
+
+  async getUserSummary(userId) {
+    const user = await this.userRepo.getUser(userId);
+    const tests = await this.testRepo.getAllTests(userId);
+    const reading = await this.readingRepo.getAllReading(userId);
+
+    let totalQ = 0;
+    let correct = 0;
+    let readingMinutes = 0;
+
+    tests.forEach(t => {
+      totalQ += t.totalQuestions || 0;
+      correct += t.correct || 0;
+    });
+
+    reading.forEach(r => {
+      readingMinutes += r.minutes || 0;
+    });
+
+    return {
+      userId,
+      name: user?.name || null,
+      joinedAt: user?.createdAt || null,
+      totalTests: tests.length,
+      totalQuestions: totalQ,
+      overallAccuracy: this.percent(correct, totalQ),
+      totalReadingMinutes: readingMinutes
+    };
+  }
+      }
