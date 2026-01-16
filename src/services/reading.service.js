@@ -1,100 +1,84 @@
-// Reading Service
-// Handles: start/stop reading, time calculation, daily aggregation
-// Scope: business logic only (no Telegram code)
+/*****************************************************************
+ * Reading Service – FINAL STABLE
+ * Handles reading start/stop, targets, time calculation
+ * NO Telegram code here
+ *****************************************************************/
 
-import { ReadingRepository } from "../repositories/reading.repo.js";
-import { UserRepository } from "../repositories/user.repo.js";
-import { logger } from "./logger.js";
+const userRepo = require("../repositories/user.repo");
 
-export class ReadingService {
-  constructor(env) {
-    this.env = env;
-    this.readingRepo = new ReadingRepository(env);
-    this.userRepo = new UserRepository(env);
-  }
+class ReadingService {
+  /* ================= START READING ================= */
+  async startReading(userId) {
+    let user = await userRepo.getUser(userId);
 
-  /**
-   * Start reading session
-   * Prevents duplicate active session per user per day
-   */
-  async startReading(userId, meta = {}) {
-    const today = this._today();
+    if (!user) {
+      user = await userRepo.createUser(userId, { role: "STUDENT" });
+    }
 
-    const active = await this.readingRepo.getActiveSession(userId, today);
-    if (active) {
+    if (user.activeSession) {
       return {
-        started: false,
-        message: "Reading already active"
+        ok: false,
+        code: "ALREADY_READING",
+        message:
+          "📖 Reading already started.\n\n🎯 Daily Target: 08:00\nUse /stop to end."
       };
     }
 
-    await this.readingRepo.startSession({
-      userId,
-      date: today,
-      startedAt: Date.now(),
-      source: meta.source || "unknown"
-    });
-
-    logger.info("Reading started", { userId, date: today });
+    await userRepo.startReadingSession(userId);
 
     return {
-      started: true,
-      date: today
+      ok: true,
+      code: "READ_STARTED",
+      message:
+        "📚 Reading started successfully!\n\n🎯 Daily Target: 08:00\nStay focused 💪"
     };
   }
 
-  /**
-   * Stop reading session
-   * Calculates minutes and stores daily total
-   */
-  async stopReading(userId) {
-    const today = this._today();
+  /* ================= STOP READING ================= */
+  async stopReading(userId, todayDate) {
+    const user = await userRepo.getUser(userId);
 
-    const session = await this.readingRepo.getActiveSession(userId, today);
-    if (!session) {
+    if (!user || !user.activeSession) {
       return {
-        stopped: false,
-        message: "No active reading session"
+        ok: false,
+        code: "NOT_READING",
+        message:
+          "⚠️ No active reading session found.\nUse /read to start reading."
       };
     }
 
-    const now = Date.now();
+    const startTime = user.activeSession.startedAt;
     const minutes = Math.max(
       1,
-      Math.floor((now - session.startedAt) / 60000)
+      Math.floor((Date.now() - startTime) / 60000)
     );
 
-    await this.readingRepo.closeSession(userId, today, minutes);
+    await userRepo.stopReadingSession(userId, todayDate, minutes);
 
-    logger.info("Reading stopped", {
-      userId,
-      date: today,
-      minutes
-    });
+    const updatedUser = await userRepo.getUser(userId);
+    const studied = updatedUser.readingLog[todayDate] || 0;
+    const remaining = Math.max(480 - studied, 0);
 
     return {
-      stopped: true,
+      ok: true,
+      code: "READ_STOPPED",
       minutes,
-      date: today
+      studied,
+      remaining,
+      message:
+        "⏱️ Reading stopped successfully\n\n" +
+        `📘 Studied Today: ${this.formatMinutes(studied)}\n` +
+        "🎯 Daily Target: 08:00\n" +
+        `⏳ Remaining: ${this.formatMinutes(remaining)}`
     };
   }
 
-  /**
-   * Get reading summary for a date
-   */
-  async getDailySummary(userId, date) {
-    const minutes = await this.readingRepo.getTotalMinutes(userId, date);
-    return {
-      date,
-      minutes
-    };
+  /* ================= FORMAT TIME ================= */
+  formatMinutes(totalMinutes) {
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
   }
+}
 
-  /**
-   * Helper: IST date (YYYY-MM-DD)
-   * NOTE: timezone handled later at scheduler level
-   */
-  _today() {
-    return new Date().toISOString().slice(0, 10);
-  }
-  }
+module.exports = new ReadingService();
