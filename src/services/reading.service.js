@@ -1,84 +1,62 @@
-/*****************************************************************
- * Reading Service – FINAL STABLE
- * Handles reading start/stop, targets, time calculation
- * NO Telegram code here
- *****************************************************************/
+// src/services/reading.service.js
+// A.E.2 – Start Reading (LOGIC ONLY, NO KV/D1) 📖🧠
 
-const userRepo = require("../repositories/user.repo");
+import { sendMessage } from "../utils/telegram.js";
 
-class ReadingService {
-  /* ================= START READING ================= */
-  async startReading(userId) {
-    let user = await userRepo.getUser(userId);
+/**
+ * Temporary in-memory tracker
+ * ⚠️ This will be replaced by KV/D1 later
+ */
+const readingSessions = new Map();
 
-    if (!user) {
-      user = await userRepo.createUser(userId, { role: "STUDENT" });
-    }
+/**
+ * Start Reading Handler
+ * @param {Object} update - Telegram update
+ * @param {Object} env - Cloudflare env
+ */
+export async function startReading(update, env) {
+  const message = update.message;
+  const chatId = message.chat.id;
+  const userName =
+    message.from.first_name ||
+    message.from.username ||
+    "Doctor";
 
-    if (user.activeSession) {
-      return {
-        ok: false,
-        code: "ALREADY_READING",
-        message:
-          "📖 Reading already started.\n\n🎯 Daily Target: 08:00\nUse /stop to end."
-      };
-    }
-
-    await userRepo.startReadingSession(userId);
-
-    return {
-      ok: true,
-      code: "READ_STARTED",
-      message:
-        "📚 Reading started successfully!\n\n🎯 Daily Target: 08:00\nStay focused 💪"
-    };
-  }
-
-  /* ================= STOP READING ================= */
-  async stopReading(userId, todayDate) {
-    const user = await userRepo.getUser(userId);
-
-    if (!user || !user.activeSession) {
-      return {
-        ok: false,
-        code: "NOT_READING",
-        message:
-          "⚠️ No active reading session found.\nUse /read to start reading."
-      };
-    }
-
-    const startTime = user.activeSession.startedAt;
-    const minutes = Math.max(
-      1,
-      Math.floor((Date.now() - startTime) / 60000)
+  // 🛑 If already reading
+  if (readingSessions.has(chatId)) {
+    return sendMessage(env, chatId,
+      "📖 You are already in *Reading Mode* ✅\n\n" +
+      "⏳ Stay consistent, Doctor!\n" +
+      "Use ⏹ *Stop Reading* when you want to pause.",
+      { parse_mode: "Markdown" }
     );
-
-    await userRepo.stopReadingSession(userId, todayDate, minutes);
-
-    const updatedUser = await userRepo.getUser(userId);
-    const studied = updatedUser.readingLog[todayDate] || 0;
-    const remaining = Math.max(480 - studied, 0);
-
-    return {
-      ok: true,
-      code: "READ_STOPPED",
-      minutes,
-      studied,
-      remaining,
-      message:
-        "⏱️ Reading stopped successfully\n\n" +
-        `📘 Studied Today: ${this.formatMinutes(studied)}\n` +
-        "🎯 Daily Target: 08:00\n" +
-        `⏳ Remaining: ${this.formatMinutes(remaining)}`
-    };
   }
 
-  /* ================= FORMAT TIME ================= */
-  formatMinutes(totalMinutes) {
-    const h = Math.floor(totalMinutes / 60);
-    const m = totalMinutes % 60;
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-  }
+  // ▶️ Start reading
+  const startedAt = new Date().toISOString();
+
+  readingSessions.set(chatId, {
+    startedAt,
+    subject: null, // will be added later
+  });
+
+  // 🎉 Welcome message
+  const text =
+    `👋 *Welcome Dr. ${userName}* ❤️🌺\n\n` +
+    `📖 *Reading Session Started!* ✅\n\n` +
+    `⏱ Start Time: ${new Date().toLocaleTimeString("en-IN")}\n\n` +
+    `🧠 Stay focused. Small steps daily = BIG success.\n\n` +
+    `👉 When done, tap *Stop Reading* ⏹`;
+
+  return sendMessage(env, chatId, text, {
+    parse_mode: "Markdown",
+  });
 }
 
-module.exports = new ReadingService();
+/**
+ * Utility (TEMP) – used only for testing/debug
+ * Will be removed once KV/D1 is added
+ */
+export function _debugGetReadingSessions() {
+  return readingSessions;
+}
