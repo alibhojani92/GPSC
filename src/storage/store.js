@@ -19,4 +19,3 @@ export const Store = {
     return [];
   }
 };
-
