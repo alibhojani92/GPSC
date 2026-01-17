@@ -1,51 +1,76 @@
-/**
- * Reading Repository
- * Handles reading session storage & aggregation
- */
-
-import { Store } from "../storage/store.js";
-
-const READING_KEY_PREFIX = "reading:";
-
-function keyFor(userId, date) {
-  return `${READING_KEY_PREFIX}${userId}:${date}`;
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
 }
 
-export const ReadingRepository = {
-  async startSession(session) {
-    const key = keyFor(session.userId, session.date);
-    await Store.set(key, session);
-    return session;
-  },
+export async function startSession(env, userId) {
+  const db = env.DB;
+  const today = todayDate();
 
-  async getSession(userId, date) {
-    return Store.get(keyFor(userId, date));
-  },
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS reading_sessions (
+      user_id TEXT,
+      date TEXT,
+      start_time INTEGER,
+      end_time INTEGER,
+      duration INTEGER
+    )`
+  ).run();
 
-  async stopSession(userId, date, endTime, durationMinutes) {
-    const key = keyFor(userId, date);
-    const session = await Store.get(key);
-    if (!session) return null;
+  const active = await db.prepare(
+    `SELECT * FROM reading_sessions
+     WHERE user_id=? AND date=? AND end_time IS NULL`
+  ).bind(userId.toString(), today).first();
 
-    session.endTime = endTime;
-    session.durationMinutes = durationMinutes;
+  if (active) return false;
 
-    await Store.set(key, session);
-    return session;
-  },
+  await db.prepare(
+    `INSERT INTO reading_sessions (user_id, date, start_time)
+     VALUES (?, ?, ?)`
+  )
+    .bind(userId.toString(), today, Date.now())
+    .run();
 
-  async getDailyMinutes(userId, date) {
-    const session = await this.getSession(userId, date);
-    return session ? session.durationMinutes : 0;
-  },
+  return true;
+}
 
-  async getAllSessionsForUser(userId) {
-    const keys = await Store.list(`${READING_KEY_PREFIX}${userId}:`);
-    const sessions = [];
-    for (const k of keys) {
-      const s = await Store.get(k);
-      if (s) sessions.push(s);
+export async function stopSession(env, userId) {
+  const db = env.DB;
+  const today = todayDate();
+
+  const session = await db.prepare(
+    `SELECT rowid, start_time FROM reading_sessions
+     WHERE user_id=? AND date=? AND end_time IS NULL`
+  ).bind(userId.toString(), today).first();
+
+  if (!session) return null;
+
+  const end = Date.now();
+  const duration = Math.floor((end - session.start_time) / 60000);
+
+  await db.prepare(
+    `UPDATE reading_sessions
+     SET end_time=?, duration=?
+     WHERE rowid=?`
+  )
+    .bind(end, duration, session.rowid)
+    .run();
+
+  return {
+    start_time: session.start_time,
+    end_time: end,
+    duration,
+  };
+}
+
+export async function getTodayTotal(env, userId) {
+  const db = env.DB;
+  const today = todayDate();
+
+  const res = await db.prepare(
+    `SELECT SUM(duration) as total
+     FROM reading_sessions
+     WHERE user_id=? AND date=?`
+  ).bind(userId.toString(), today).first();
+
+  return res?.total || 0;
     }
-    return sessions;
-  },
-};
