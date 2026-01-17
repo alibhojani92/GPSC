@@ -1,120 +1,126 @@
-// reading.service.js
-// AE.5 FULL IMPLEMENTATION (5.1 → 5.5)
-// Cloudflare Workers compatible
+// services/reading.service.js
+// A.E.5 FINAL – Reading Tracker + Target + Smart Replies
+// Uses: D1 (reading_sessions) + KV (daily_target, today_total)
 
-import { saveSession, endSession, getTodayStats } from "./reading.repo";
+const DAILY_TARGET_SECONDS = 8 * 60 * 60; // 8 hours
 
-/**
- * Start Reading
- */
-export async function startReading(chatId, env) {
-  const now = new Date();
+function nowIST() {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+}
 
-  await saveSession(chatId, now, env);
+function formatTime(date) {
+  return date.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
 
-  const stats = await getTodayStats(chatId, env);
+function formatDuration(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${h}h ${m}m`;
+}
 
-  const TARGET_MINUTES = 8 * 60; // 🎯 8 hours
-  const remaining = Math.max(TARGET_MINUTES - stats.totalMinutes, 0);
+export async function startReading(update, env) {
+  const userId = String(update.message.from.id);
+  const startTime = nowIST();
+
+  // close any open session (safety)
+  await env.DB.prepare(
+    `UPDATE reading_sessions 
+     SET end_time = ?, duration = CAST((julianday(?) - julianday(start_time)) * 86400 AS INTEGER)
+     WHERE user_id = ? AND end_time IS NULL`
+  ).bind(startTime.toISOString(), startTime.toISOString(), userId).run();
+
+  // start new session
+  await env.DB.prepare(
+    `INSERT INTO reading_sessions (user_id, start_time) VALUES (?, ?)`
+  ).bind(userId, startTime.toISOString()).run();
 
   return {
-    text: `📚 *Reading STARTED* ✅
-🕒 *Start Time:* ${now.toLocaleTimeString()}
-📊 *Today's Reading:* ${formatMinutes(stats.totalMinutes)}
-🎯 *Daily Target:* 8 Hours
-⏳ *Remaining:* ${formatMinutes(remaining)}
+    text:
+`📚 Reading STARTED ✅
+🕒 Start Time: ${formatTime(startTime)}
+🎯 Daily Target: 8 Hours
 🔥 Keep going Doctor 💪🦷`,
   };
 }
 
-/**
- * Stop Reading
- */
-export async function stopReading(chatId, env) {
-  const now = new Date();
+export async function stopReading(update, env) {
+  const userId = String(update.message.from.id);
+  const endTime = nowIST();
 
-  const session = await endSession(chatId, now, env);
+  // get active session
+  const session = await env.DB.prepare(
+    `SELECT id, start_time FROM reading_sessions 
+     WHERE user_id = ? AND end_time IS NULL 
+     ORDER BY id DESC LIMIT 1`
+  ).bind(userId).first();
 
   if (!session) {
     return {
-      text: `⚠️ *No active reading session found*
-📖 Please start reading first 😊`,
+      text: "⚠️ No active reading session found.",
     };
   }
 
-  const stats = await getTodayStats(chatId, env);
-  const TARGET_MINUTES = 8 * 60;
-  const remaining = Math.max(TARGET_MINUTES - stats.totalMinutes, 0);
+  const startTime = new Date(session.start_time);
+  const durationSec = Math.max(
+    0,
+    Math.floor((endTime - startTime) / 1000)
+  );
+
+  // close session
+  await env.DB.prepare(
+    `UPDATE reading_sessions 
+     SET end_time = ?, duration = ?
+     WHERE id = ?`
+  ).bind(endTime.toISOString(), durationSec, session.id).run();
+
+  // get today's total
+  const todayKey = `${userId}:today_total`;
+  const prevTotal = Number(await env.KV.get(todayKey)) || 0;
+  const newTotal = prevTotal + durationSec;
+  await env.KV.put(todayKey, String(newTotal));
+
+  const remaining = Math.max(0, DAILY_TARGET_SECONDS - newTotal);
 
   return {
-    text: `⏸ *Reading STOPPED* ✅
-🕒 *End Time:* ${now.toLocaleTimeString()}
-⏱ *Session Duration:* ${formatMinutes(session.duration)}
-📊 *Today's Total:* ${formatMinutes(stats.totalMinutes)}
-🎯 *Target Remaining:* ${formatMinutes(remaining)}
-😌 Take rest & resume later 🌿`,
+    text:
+`⏸ Reading STOPPED ✅
+🕒 End Time: ${formatTime(endTime)}
+⏳ Session Duration: ${formatDuration(durationSec)}
+
+📊 Today Total: ${formatDuration(newTotal)}
+🎯 Target: 8h
+⏱ Remaining: ${formatDuration(remaining)}
+
+🌟 Take rest & resume later Doctor 💙`,
   };
 }
 
-/**
- * My Progress
- */
-export async function myProgress(chatId, env) {
-  const stats = await getTodayStats(chatId, env);
-  const TARGET_MINUTES = 8 * 60;
-  const remaining = Math.max(TARGET_MINUTES - stats.totalMinutes, 0);
+export async function readingStatus(update, env) {
+  const userId = String(update.message.from.id);
+
+  const todayKey = `${userId}:today_total`;
+  const total = Number(await env.KV.get(todayKey)) || 0;
+  const remaining = Math.max(0, DAILY_TARGET_SECONDS - total);
 
   return {
-    text: `📈 *Your Progress Today*
-📚 Sessions: ${stats.sessions}
-⏱ Total Reading: ${formatMinutes(stats.totalMinutes)}
-🎯 Daily Target: 8 Hours
-⏳ Remaining: ${formatMinutes(remaining)}
-🚀 Consistency beats intensity Doctor 🦷🔥`,
+    text:
+`📊 Reading Progress 📚
+⏳ Today Read: ${formatDuration(total)}
+🎯 Target: 8h
+⏱ Remaining: ${formatDuration(remaining)}
+
+🔥 Consistency = Success Doctor 💪🦷`,
   };
 }
 
-/**
- * Daily Test (Placeholder)
- */
-export function dailyTest() {
-  return {
-    text: `📝 *Daily Test*
-⏳ Coming soon...
-Prepare well Doctor 💪📖`,
-  };
-}
-
-/**
- * MCQ Practice (Placeholder)
- */
-export function mcqPractice() {
-  return {
-    text: `✍️ *MCQ Practice*
-📚 Loading questions...
-Sharpen your concepts 🧠✨`,
-  };
-}
-
-/**
- * Subject List (Placeholder)
- */
-export function subjectList() {
-  return {
-    text: `📚 *Subject List*
-🦷 Dental Anatomy
-🦷 Dental Materials
-🦷 Pathology
-🦷 Pharmacology
-📖 More coming soon...`,
-  };
-}
-
-/**
- * Helpers
- */
-function formatMinutes(minutes) {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `${h}h ${m}m`;
-    }
+/*
+A.E.5.6 – Reminder hooks (future ready)
+--------------------------------------
+• Cron trigger can check KV today_total
+• If remaining > 0 → send reminder
+• No code here yet (LOCKED FOR NEXT STEP)
+*/
