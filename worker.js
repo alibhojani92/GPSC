@@ -1,7 +1,3 @@
-// ================= GLOBAL STATE (TEMP) =================
-const readingSessions = {};   // { chatId: startTimestamp }
-const dailyTotals = {};       // { chatId: minutes }
-
 // ================= WORKER =================
 export default {
   async fetch(req, env) {
@@ -22,16 +18,24 @@ export default {
 
       // ===== START READING =====
       if (action === "START_READING") {
-        if (readingSessions[chatId]) {
+        const sessionKey = `session:${chatId}`;
+        const existing = await env.READING_KV.get(sessionKey);
+
+        if (existing) {
           text =
             "⚠️ Reading already started 📖\n" +
             "⏱ Time is running...\n" +
             "👉 Press ⏸ Stop Reading when done";
         } else {
-          readingSessions[chatId] = Date.now();
+          const startTime = Date.now();
+          await env.READING_KV.put(
+            sessionKey,
+            JSON.stringify({ startTime })
+          );
+
           text =
             "📚 Reading STARTED ✅\n\n" +
-            "🕒 Start Time: " + formatTime(new Date()) + "\n" +
+            "🕒 Start Time: " + formatTime(new Date(startTime)) + "\n" +
             "🎯 Daily Target: 8 Hours\n\n" +
             "🔥 Keep going Doctor 💪🦷";
         }
@@ -39,37 +43,44 @@ export default {
 
       // ===== STOP READING =====
       if (action === "STOP_READING") {
-        if (!readingSessions[chatId]) {
+        const sessionKey = `session:${chatId}`;
+        const session = await env.READING_KV.get(sessionKey, "json");
+
+        if (!session) {
           text =
-            "⚠️ No active reading session found 🤔\n" +
+            "⚠️ No active reading session 🤔\n" +
             "👉 Press 📚 Start Reading to begin";
         } else {
-          const start = readingSessions[chatId];
           const end = Date.now();
-          delete readingSessions[chatId];
+          const minutes = Math.floor((end - session.startTime) / 60000);
 
-          const minutes = Math.floor((end - start) / 60000);
-          dailyTotals[chatId] = (dailyTotals[chatId] || 0) + minutes;
+          await env.READING_KV.delete(sessionKey);
 
-          const totalMin = dailyTotals[chatId];
-          const remaining = Math.max(480 - totalMin, 0);
+          const date = today();
+          const dailyKey = `daily:${chatId}:${date}`;
+          const prev = await env.READING_KV.get(dailyKey);
+          const total = (parseInt(prev || "0") + minutes);
+
+          await env.READING_KV.put(dailyKey, total.toString());
+
+          const remaining = Math.max(480 - total, 0);
 
           text =
             "⏸ Reading STOPPED ✅\n\n" +
             "⏱ Session Duration: " + formatDuration(minutes) + "\n\n" +
-            "📊 Today Total: " + formatDuration(totalMin) + "\n" +
+            "📊 Today Total: " + formatDuration(total) + "\n" +
             "🎯 Target Left: " + formatDuration(remaining) + "\n\n" +
             "🌟 Consistency beats intensity!";
         }
       }
 
-      // ===== OTHER BUTTONS (PLACEHOLDER) =====
+      // ===== OTHER BUTTONS =====
       if (action === "DAILY_TEST") text = "📝 Daily Test coming soon ⏳";
       if (action === "MCQ_PRACTICE") text = "✍️ MCQ Practice coming 📚";
-      if (action === "MY_PROGRESS") text = "📊 Progress will appear here";
+      if (action === "MY_PROGRESS") text = "📊 Progress loading...";
       if (action === "SUBJECT_LIST") text = "📚 Subject list loading...";
       if (action === "SET_TARGET") text = "🎯 Target setting coming soon";
-      if (action === "REMINDER") text = "⏰ Reminder settings coming";
+      if (action === "REMINDER") text = "⏰ Reading reminder coming";
       if (action === "SETTINGS") text = "⚙️ Settings coming";
       if (action === "HELP") text = "❓ Help coming";
 
@@ -81,6 +92,9 @@ export default {
 };
 
 // ================= HELPERS =================
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 function formatTime(date) {
   return date.toLocaleTimeString("en-IN", {
@@ -148,4 +162,4 @@ async function sendText(chatId, text, env) {
   });
 
   return new Response("OK");
-                                      }
+      }
