@@ -9,8 +9,8 @@
  * - No DB / KV access
  */
 
-import { handleReadingCallback } from "../handlers/reading.handler";
-import { sendComingSoon } from "../handlers/message.handler";
+import { handleReadingCallback } from "../src/handlers/reading.handler.js";
+import { sendComingSoon } from "../src/handlers/message.handler.js";
 
 export async function routeCallback(query, ctx) {
   const action = query.data;
