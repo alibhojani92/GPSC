@@ -1,106 +1,74 @@
+import {
+  startSession,
+  stopSession,
+  getTodayTotal,
+} from "../repos/reading.repo";
 import { sendMessage } from "../utils/telegram";
 
-const DAILY_TARGET_SECONDS = 8 * 60 * 60; // 8 hours
+const DAILY_TARGET_MIN = 8 * 60; // 8 hours
 
-export async function startReading({ chatId, userId }, env) {
-  const key = `reading:${userId}`;
-
-  const existing = await env.KV.get(key, "json");
-  if (existing?.startedAt) {
-    return sendMessage(chatId, env, {
-      text: "⚠️ Reading already in progress ⏳",
-    });
-  }
-
-  const now = Date.now();
-
-  await env.KV.put(
-    key,
-    JSON.stringify({
-      startedAt: now,
-      todaySeconds: existing?.todaySeconds || 0,
-    })
-  );
-
-  return sendMessage(chatId, env, {
-    text:
-      "📚 Reading STARTED ✅\n" +
-      `🕒 Start Time: ${new Date(now).toLocaleTimeString()}\n` +
-      "🎯 Daily Target: 8 Hours\n" +
-      "🔥 Keep going Doctor 💪🦷",
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
-export async function stopReading({ chatId, userId }, env) {
-  const key = `reading:${userId}`;
-  const data = await env.KV.get(key, "json");
-
-  if (!data?.startedAt) {
-    return sendMessage(chatId, env, {
-      text: "⚠️ No active reading session found",
-    });
-  }
-
-  const now = Date.now();
-  const sessionSeconds = Math.floor((now - data.startedAt) / 1000);
-  const totalToday = data.todaySeconds + sessionSeconds;
-  const remaining = Math.max(DAILY_TARGET_SECONDS - totalToday, 0);
-
-  // Save to D1
-  await env.DB.prepare(
-    `INSERT INTO reading_sessions (user_id, start_time, end_time, duration)
-     VALUES (?, ?, ?, ?)`
-  ).bind(
-    userId,
-    new Date(data.startedAt).toISOString(),
-    new Date(now).toISOString(),
-    sessionSeconds
-  ).run();
-
-  // Update KV
-  await env.KV.put(
-    key,
-    JSON.stringify({
-      startedAt: null,
-      todaySeconds: totalToday,
-    })
-  );
-
-  return sendMessage(chatId, env, {
-    text:
-      "⏸ Reading STOPPED ✅\n\n" +
-      `🕒 Session Time: ${format(sessionSeconds)}\n` +
-      `📊 Today Total: ${format(totalToday)}\n` +
-      `🎯 Remaining: ${format(remaining)}\n\n` +
-      "👏 Excellent effort Doctor 🦷🔥",
-  });
-}
-
-export async function readingStatus({ chatId, userId }, env) {
-  const key = `reading:${userId}`;
-  const data = await env.KV.get(key, "json");
-
-  if (!data) {
-    return sendMessage(chatId, env, {
-      text: "📊 No reading data yet",
-    });
-  }
-
-  const remaining = Math.max(
-    DAILY_TARGET_SECONDS - (data.todaySeconds || 0),
-    0
-  );
-
-  return sendMessage(chatId, env, {
-    text:
-      "📊 Reading Progress\n\n" +
-      `📚 Today Total: ${format(data.todaySeconds || 0)}\n` +
-      `🎯 Remaining: ${format(remaining)}\n`,
-  });
-}
-
-function format(seconds) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
+function formatDuration(mins) {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
   return `${h}h ${m}m`;
+}
+
+export async function startReading(chatId, env) {
+  const started = await startSession(env, chatId);
+
+  if (!started) {
+    await sendMessage(
+      env,
+      chatId,
+      "⚠️ Reading already in progress 📖"
+    );
+    return new Response("OK");
+  }
+
+  const text =
+`📚 Reading STARTED ✅
+🕒 Start Time: ${formatTime(Date.now())}
+🎯 Daily Target: 8 Hours
+🔥 Keep going Doctor 💪🦷`;
+
+  await sendMessage(env, chatId, text);
+  return new Response("OK");
+}
+
+export async function stopReading(chatId, env) {
+  const session = await stopSession(env, chatId);
+
+  if (!session) {
+    await sendMessage(
+      env,
+      chatId,
+      "⚠️ No active reading session found"
+    );
+    return new Response("OK");
+  }
+
+  const todayTotal = await getTodayTotal(env, chatId);
+  const remaining = Math.max(DAILY_TARGET_MIN - todayTotal, 0);
+
+  const text =
+`⏸ Reading STOPPED ✅
+
+🕒 Start: ${formatTime(session.start_time)}
+🕒 End: ${formatTime(session.end_time)}
+⏱ Duration: ${formatDuration(session.duration)}
+
+📊 Today Total: ${formatDuration(todayTotal)}
+🎯 Target Left: ${formatDuration(remaining)}
+
+🌟 Consistency beats intensity!`;
+
+  await sendMessage(env, chatId, text);
+  return new Response("OK");
 }
