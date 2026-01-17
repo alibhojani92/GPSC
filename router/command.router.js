@@ -1,46 +1,17 @@
-/**
- * src/router/command.router.js
- * ----------------------------------
- * Telegram Command Router
- * ----------------------------------
- * RULES:
- * - Only routing
- * - No business logic
- * - No Telegram API calls
- */
-
 import { handleStart } from "../src/handlers/start.handler.js";
 import { handleReadingCommand } from "../src/handlers/reading.handler.js";
 import { sendUnknownCommand } from "../src/handlers/message.handler.js";
-export async function routeCommand(message, ctx) {
-  const text = message.text || "";
-  const chatId = message.chat.id;
 
-  // Extract command (remove bot username if exists)
-  const command = text.split(" ")[0].split("@")[0];
+export async function handleCommand(update, env) {
+  const text = update.message?.text || "";
 
-  switch (command) {
-    case "/start":
-      return handleStart(message, ctx);
-
-    case "/read":
-    case "/reading":
-      return handleReadingCommand(message, ctx);
-
-    case "/progress":
-      return ctx.telegram.sendMessage(
-        chatId,
-        "📊 <b>Your progress section is coming soon!</b>\n\nStay consistent 💪🦷"
-      );
-
-    case "/help":
-      return ctx.telegram.sendMessage(
-        chatId,
-        "ℹ️ <b>Help</b>\n\nUse the buttons below to navigate the bot 👇"
-      );
-
-    default:
-      return sendUnknownCommand(message, ctx);
+  if (text === "/start") {
+    return handleStart(update, env);
   }
+
+  if (text === "/read") {
+    return handleReadingCommand(update, env);
+  }
+
+  return sendUnknownCommand(update, env);
 }
-  
