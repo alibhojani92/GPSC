@@ -1,76 +1,43 @@
-function todayDate() {
-  return new Date().toISOString().slice(0, 10);
-}
+const SESSION_KEY = "reading:session";
+const TOTAL_KEY = "reading:total";
 
 export async function startSession(env, userId) {
-  const db = env.DB;
-  const today = todayDate();
+  const key = `${SESSION_KEY}:${userId}`;
+  const existing = await env.KV.get(key, "json");
 
-  await db.prepare(
-    `CREATE TABLE IF NOT EXISTS reading_sessions (
-      user_id TEXT,
-      date TEXT,
-      start_time INTEGER,
-      end_time INTEGER,
-      duration INTEGER
-    )`
-  ).run();
+  if (existing) return null;
 
-  const active = await db.prepare(
-    `SELECT * FROM reading_sessions
-     WHERE user_id=? AND date=? AND end_time IS NULL`
-  ).bind(userId.toString(), today).first();
+  const session = {
+    start_time: Date.now(),
+  };
 
-  if (active) return false;
-
-  await db.prepare(
-    `INSERT INTO reading_sessions (user_id, date, start_time)
-     VALUES (?, ?, ?)`
-  )
-    .bind(userId.toString(), today, Date.now())
-    .run();
-
-  return true;
+  await env.KV.put(key, JSON.stringify(session));
+  return session;
 }
 
 export async function stopSession(env, userId) {
-  const db = env.DB;
-  const today = todayDate();
-
-  const session = await db.prepare(
-    `SELECT rowid, start_time FROM reading_sessions
-     WHERE user_id=? AND date=? AND end_time IS NULL`
-  ).bind(userId.toString(), today).first();
+  const key = `${SESSION_KEY}:${userId}`;
+  const session = await env.KV.get(key, "json");
 
   if (!session) return null;
 
   const end = Date.now();
-  const duration = Math.floor((end - session.start_time) / 60000);
+  const durationMin = Math.floor((end - session.start_time) / 60000);
 
-  await db.prepare(
-    `UPDATE reading_sessions
-     SET end_time=?, duration=?
-     WHERE rowid=?`
-  )
-    .bind(end, duration, session.rowid)
-    .run();
+  const todayKey = `${TOTAL_KEY}:${userId}:${new Date().toISOString().slice(0,10)}`;
+  const prev = Number(await env.KV.get(todayKey)) || 0;
+
+  await env.KV.put(todayKey, String(prev + durationMin));
+  await env.KV.delete(key);
 
   return {
     start_time: session.start_time,
     end_time: end,
-    duration,
+    duration: durationMin,
   };
 }
 
 export async function getTodayTotal(env, userId) {
-  const db = env.DB;
-  const today = todayDate();
-
-  const res = await db.prepare(
-    `SELECT SUM(duration) as total
-     FROM reading_sessions
-     WHERE user_id=? AND date=?`
-  ).bind(userId.toString(), today).first();
-
-  return res?.total || 0;
-    }
+  const todayKey = `${TOTAL_KEY}:${userId}:${new Date().toISOString().slice(0,10)}`;
+  return Number(await env.KV.get(todayKey)) || 0;
+}
