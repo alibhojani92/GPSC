@@ -1,82 +1,74 @@
 // services/reading.service.js
-// Handles reading start / stop with full target logic
 
-import {
-  nowIST,
-  formatTime,
-  todayDate,
-  diffMinutes,
-  formatDuration,
-  remainingTarget,
-  DAILY_TARGET_MINUTES,
-} from "../utils/time.js";
+import { nowIST, formatDuration } from "../utils/time.js";
 
-/*
-KV STRUCTURE USED
-reading:active:{userId}  -> { start, date }
-reading:log:{date}:{userId} -> total minutes
-*/
+const DAILY_TARGET_MIN = 8 * 60; // 8 hours
 
-export async function startReading(env, userId) {
-  const today = todayDate();
-  const activeKey = `reading:active:${userId}`;
+export async function startReading(userId, env) {
+  const key = `reading:${userId}`;
+  const existing = await env.KV.get(key, "json");
 
-  const existing = await env.KV.get(activeKey, { type: "json" });
-  if (existing && existing.date === today) {
+  if (existing?.active) {
     return {
-      text: "📖 Reading already running today.\nKeep going Doctor 💪🦷",
+      text: "📖 Reading already in progress.\nKeep going 💪🦷",
     };
   }
 
-  const now = nowIST();
+  const startTime = nowIST();
   await env.KV.put(
-    activeKey,
+    key,
     JSON.stringify({
-      start: now.getTime(),
-      date: today,
+      active: true,
+      start: startTime,
+      today: existing?.today || 0,
+      date: startTime.slice(0, 10),
     })
   );
 
   return {
     text:
-      "📚 Reading STARTED ✅\n\n" +
-      `🕒 Start Time: ${formatTime(now)}\n` +
-      `🎯 Daily Target: ${formatDuration(DAILY_TARGET_MINUTES)}\n\n` +
+      "📚 Reading STARTED ✅\n" +
+      `🕒 Start Time: ${startTime}\n` +
+      "🎯 Daily Target: 8 Hours\n" +
       "🔥 Keep going Doctor 💪🦷",
   };
 }
 
-export async function stopReading(env, userId) {
-  const activeKey = `reading:active:${userId}`;
-  const session = await env.KV.get(activeKey, { type: "json" });
+export async function stopReading(userId, env) {
+  const key = `reading:${userId}`;
+  const data = await env.KV.get(key, "json");
 
-  if (!session) {
+  if (!data?.active) {
     return {
       text: "⚠️ No active reading session found.",
     };
   }
 
-  const startTime = new Date(session.start);
   const endTime = nowIST();
-  const durationMin = diffMinutes(session.start, endTime.getTime());
+  const start = new Date(data.start);
+  const end = new Date(endTime);
 
-  const logKey = `reading:log:${session.date}:${userId}`;
-  const prevTotal = Number(await env.KV.get(logKey)) || 0;
-  const newTotal = prevTotal + durationMin;
+  const durationMin = Math.floor((end - start) / 60000);
+  const todayTotal = (data.today || 0) + durationMin;
+  const remaining = Math.max(DAILY_TARGET_MIN - todayTotal, 0);
 
-  await env.KV.put(logKey, String(newTotal));
-  await env.KV.delete(activeKey);
-
-  const remaining = remainingTarget(newTotal);
+  await env.KV.put(
+    key,
+    JSON.stringify({
+      active: false,
+      today: todayTotal,
+      date: data.date,
+    })
+  );
 
   return {
     text:
       "⏸ Reading STOPPED ✅\n\n" +
-      `🕒 Start: ${formatTime(startTime)}\n` +
-      `🕒 End: ${formatTime(endTime)}\n` +
+      `🕒 Start: ${data.start}\n` +
+      `🕒 End: ${endTime}\n` +
       `⏱ Duration: ${formatDuration(durationMin)}\n\n` +
-      `📊 Today Total: ${formatDuration(newTotal)}\n` +
+      `📊 Today Total: ${formatDuration(todayTotal)}\n` +
       `🎯 Target Left: ${formatDuration(remaining)}\n\n` +
       "🌟 Consistency beats intensity!",
   };
-}
+    }
