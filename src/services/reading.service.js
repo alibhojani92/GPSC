@@ -1,109 +1,79 @@
-export class ReadingService {
-  constructor(env) {
-    this.env = env;
-    this.db = env.DB;
-    this.kv = env.STATE_KV;
+// src/services/reading.service.js
+
+const TARGET_SECONDS = 8 * 60 * 60; // 8 hours
+
+export async function startReading(userId, env) {
+  const kvKey = `reading:${userId}`;
+
+  const active = await env.KV.get(kvKey, "json");
+  if (active?.active) {
+    return "⚠️ Reading already active.";
   }
 
-  // =========================
-  // START READING
-  // =========================
-  async startReading(userId) {
-    const kvKey = `reading:${userId}`;
+  const startTime = new Date();
+  await env.KV.put(
+    kvKey,
+    JSON.stringify({ active: true, start: startTime.toISOString() })
+  );
 
-    // Prevent double start
-    const existing = await this.kv.get(kvKey, "json");
-    if (existing?.active) {
-      return {
-        text: "📚 Reading already STARTED ✅",
-      };
-    }
+  return (
+    "📚 Reading STARTED ✅\n" +
+    `🕒 Start Time: ${startTime.toLocaleTimeString("en-IN")}\n` +
+    "🎯 Daily Target: 8 Hours\n" +
+    "🔥 Keep going Doctor 💪🦷"
+  );
+}
 
-    const startTime = Date.now();
+export async function stopReading(userId, env) {
+  const kvKey = `reading:${userId}`;
+  const data = await env.KV.get(kvKey, "json");
 
-    // Save to KV (live state)
-    await this.kv.put(
-      kvKey,
-      JSON.stringify({
-        active: true,
-        startTime,
-      })
-    );
-
-    // Save to D1 (permanent)
-    await this.db
-      .prepare(
-        `INSERT INTO reading_sessions (user_id, start_time)
-         VALUES (?, datetime('now'))`
-      )
-      .bind(userId)
-      .run();
-
-    return {
-      text: "📖 Reading STARTED ✅\n⏱️ Time tracking ON",
-    };
+  if (!data?.active) {
+    return "⚠️ Reading not active.";
   }
 
-  // =========================
-  // STOP READING
-  // =========================
-  async stopReading(userId) {
-    const kvKey = `reading:${userId}`;
+  const start = new Date(data.start);
+  const end = new Date();
+  const durationSec = Math.floor((end - start) / 1000);
 
-    const state = await this.kv.get(kvKey, "json");
-    if (!state?.active) {
-      return {
-        text: "⏸️ Reading is not active",
-      };
-    }
+  // Save session to D1
+  await env.DB.prepare(
+    `
+    INSERT INTO reading_sessions (user_id, start_time, end_time, duration)
+    VALUES (?, ?, ?, ?)
+  `
+  )
+    .bind(userId, start.toISOString(), end.toISOString(), durationSec)
+    .run();
 
-    const endTime = Date.now();
-    const durationSeconds = Math.floor(
-      (endTime - state.startTime) / 1000
-    );
+  await env.KV.delete(kvKey);
 
-    // Update last open session
-    await this.db
-      .prepare(
-        `UPDATE reading_sessions
-         SET end_time = datetime('now'),
-             duration = ?
-         WHERE user_id = ?
-         AND end_time IS NULL`
-      )
-      .bind(durationSeconds, userId)
-      .run();
+  // Calculate today total
+  const today = new Date().toISOString().slice(0, 10);
+  const result = await env.DB.prepare(
+    `
+    SELECT SUM(duration) as total
+    FROM reading_sessions
+    WHERE user_id = ? AND date(start_time) = ?
+  `
+  )
+    .bind(userId, today)
+    .first();
 
-    // Clear KV
-    await this.kv.delete(kvKey);
+  const totalSec = result?.total || 0;
+  const remaining = Math.max(TARGET_SECONDS - totalSec, 0);
 
-    return {
-      text:
-        "⏹️ Reading STOPPED ✅\n" +
-        `🕒 Duration: ${Math.floor(durationSeconds / 60)} min`,
-    };
-  }
+  return (
+    "⏸️ Reading STOPPED ✅\n" +
+    `🕒 Session: ${format(durationSec)}\n` +
+    `📊 Today: ${format(totalSec)} / 8h\n` +
+    `⏳ Remaining: ${format(remaining)}\n` +
+    "💙 Take rest & resume later"
+  );
+}
 
-  // =========================
-  // CHECK STATUS
-  // =========================
-  async getStatus(userId) {
-    const kvKey = `reading:${userId}`;
-    const state = await this.kv.get(kvKey, "json");
-
-    if (!state?.active) {
-      return {
-        active: false,
-      };
-    }
-
-    const elapsed = Math.floor(
-      (Date.now() - state.startTime) / 1000
-    );
-
-    return {
-      active: true,
-      elapsed,
-    };
-  }
+function format(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return `${h}h ${m}m`;
 }
