@@ -1,6 +1,8 @@
 name = "gpsc-v2"
 main = "worker.js"
 compatibility_date = "2024-12-01"
+[vars]
+BOT_TOKEN = "8350086915:AAGtzNoCW-zqJEZlnS8cnEiszDFaaWy3KVM"
 
 kv_namespaces = [
   { binding = "KV", id = "1a154163dd614f8da7d889b5aa04701b" }
