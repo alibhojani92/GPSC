@@ -9,10 +9,9 @@
  * - No Telegram API calls
  */
 
-import { handleStart } from "../handlers/start.handler";
-import { handleReadingCommand } from "../handlers/reading.handler";
-import { sendUnknownCommand } from "../handlers/message.handler";
-
+import { handleStart } from "../src/handlers/start.handler.js";
+import { handleReadingCommand } from "../src/handlers/reading.handler.js";
+import { sendUnknownCommand } from "../src/handlers/message.handler.js";
 export async function routeCommand(message, ctx) {
   const text = message.text || "";
   const chatId = message.chat.id;
