@@ -1,79 +1,77 @@
-// src/services/reading.service.js
+const DAILY_TARGET_SECONDS = 8 * 60 * 60; // 8 hours
 
-const TARGET_SECONDS = 8 * 60 * 60; // 8 hours
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDuration(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${h > 0 ? h + "h " : ""}${m}m`;
+}
 
 export async function startReading(userId, env) {
-  const kvKey = `reading:${userId}`;
+  const startTime = Date.now();
 
-  const active = await env.KV.get(kvKey, "json");
-  if (active?.active) {
-    return "⚠️ Reading already active.";
-  }
-
-  const startTime = new Date();
   await env.KV.put(
-    kvKey,
-    JSON.stringify({ active: true, start: startTime.toISOString() })
+    `reading:${userId}`,
+    JSON.stringify({ startTime })
   );
 
-  return (
-    "📚 Reading STARTED ✅\n" +
-    `🕒 Start Time: ${startTime.toLocaleTimeString("en-IN")}\n` +
-    "🎯 Daily Target: 8 Hours\n" +
-    "🔥 Keep going Doctor 💪🦷"
-  );
+  await env.DB.prepare(
+    `INSERT INTO reading_sessions (user_id, start_time)
+     VALUES (?, ?)`
+  ).bind(userId, startTime).run();
+
+  return `📘 Reading STARTED ✅
+⏱️ Time tracking ON`;
 }
 
 export async function stopReading(userId, env) {
-  const kvKey = `reading:${userId}`;
-  const data = await env.KV.get(kvKey, "json");
+  const kvData = await env.KV.get(`reading:${userId}`, "json");
 
-  if (!data?.active) {
-    return "⚠️ Reading not active.";
+  if (!kvData) {
+    return `⚠️ No active reading session found`;
   }
 
-  const start = new Date(data.start);
-  const end = new Date();
-  const durationSec = Math.floor((end - start) / 1000);
+  const endTime = Date.now();
+  const durationSec = Math.floor((endTime - kvData.startTime) / 1000);
 
-  // Save session to D1
   await env.DB.prepare(
-    `
-    INSERT INTO reading_sessions (user_id, start_time, end_time, duration)
-    VALUES (?, ?, ?, ?)
-  `
-  )
-    .bind(userId, start.toISOString(), end.toISOString(), durationSec)
-    .run();
+    `UPDATE reading_sessions
+     SET end_time = ?, duration = ?
+     WHERE user_id = ? AND end_time IS NULL`
+  ).bind(endTime, durationSec, userId).run();
 
-  await env.KV.delete(kvKey);
+  await env.KV.delete(`reading:${userId}`);
 
-  // Calculate today total
-  const today = new Date().toISOString().slice(0, 10);
-  const result = await env.DB.prepare(
-    `
-    SELECT SUM(duration) as total
-    FROM reading_sessions
-    WHERE user_id = ? AND date(start_time) = ?
-  `
-  )
-    .bind(userId, today)
-    .first();
+  // total today
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
 
-  const totalSec = result?.total || 0;
-  const remaining = Math.max(TARGET_SECONDS - totalSec, 0);
+  const { results } = await env.DB.prepare(
+    `SELECT SUM(duration) as total
+     FROM reading_sessions
+     WHERE user_id = ?
+     AND start_time >= ?`
+  ).bind(userId, todayStart.getTime()).all();
 
-  return (
-    "⏸️ Reading STOPPED ✅\n" +
-    `🕒 Session: ${format(durationSec)}\n` +
-    `📊 Today: ${format(totalSec)} / 8h\n` +
-    `⏳ Remaining: ${format(remaining)}\n` +
-    "💙 Take rest & resume later"
-  );
-}
+  const totalToday = results[0]?.total || 0;
+  const remaining = Math.max(0, DAILY_TARGET_SECONDS - totalToday);
 
-function format(sec) {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  return `${h}h ${m}m`;
-}
+  return `📘 Reading Session Completed ✅
+
+🕒 Started at: ${formatTime(kvData.startTime)}
+🕔 Ended at: ${formatTime(endTime)}
+⏱️ Session Duration: ${formatDuration(durationSec)}
+
+📊 Today's Progress:
+• Total studied today: ${formatDuration(totalToday)}
+• Daily Target: 8h
+• Remaining: ${formatDuration(remaining)}
+
+💪 Keep going! You're doing great 🔥`;
+         }
