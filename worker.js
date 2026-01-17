@@ -1,45 +1,45 @@
 /**
- * ENTRY POINT — Cloudflare Worker
- * HARD RULES:
- * - No business logic here
- * - No feature logic
- * - Only routing Telegram updates
+ * ROOT ENTRY — Cloudflare Worker
+ * ONLY job:
+ *  - Receive Telegram webhook
+ *  - Forward update to router
+ *  - Never crash
  */
 
-import { handleCommand } from "./router/command.router.js";
-import { handleCallback } from "./router/callback.router.js";
-import { TELEGRAM_API } from "./telegram.js";
+import { handleCommand } from "./src/router/command.router.js";
+import { handleCallback } from "./src/router/callback.router.js";
+import { createTelegramClient } from "./src/telegram.js";
 
 export default {
-  async fetch(request, env) {
-    if (request.method !== "POST") {
-      return new Response("OK", { status: 200 });
-    }
-
-    let update;
+  async fetch(request, env, ctx) {
     try {
-      update = await request.json();
-    } catch (e) {
-      return new Response("Invalid JSON", { status: 400 });
-    }
-
-    try {
-      // Callback queries (inline buttons)
-      if (update.callback_query) {
-        await handleCallback(update, env);
+      // Only POST from Telegram
+      if (request.method !== "POST") {
         return new Response("OK", { status: 200 });
       }
 
-      // Normal messages (/start, /read, text, etc)
+      const update = await request.json();
+
+      // Attach telegram client once
+      env.TELEGRAM = createTelegramClient(env.BOT_TOKEN);
+
+      // Message (commands, text)
       if (update.message) {
         await handleCommand(update, env);
         return new Response("OK", { status: 200 });
       }
 
-      return new Response("Ignored", { status: 200 });
+      // Callback query (inline keyboard)
+      if (update.callback_query) {
+        await handleCallback(update, env);
+        return new Response("OK", { status: 200 });
+      }
+
+      return new Response("OK", { status: 200 });
     } catch (err) {
-      console.error("Worker error:", err);
-      return new Response("Error", { status: 500 });
+      // 🔥 NEVER let worker crash
+      console.error("WORKER ERROR:", err);
+      return new Response("OK", { status: 200 });
     }
   },
 };
