@@ -1,10 +1,11 @@
 import { startReading, stopReading } from "./reading.service.js";
 
 export async function handleCommand(update, env) {
-  /* ---------------- MESSAGE (/start) ---------------- */
+
+  /* ================= /start ================= */
   if (update.message) {
     const chatId = update.message.chat.id;
-    const text = update.message.text || "";
+    const text = update.message.text;
 
     if (text === "/start") {
       return {
@@ -33,54 +34,65 @@ export async function handleCommand(update, env) {
     }
   }
 
-  /* ---------------- INLINE BUTTON CLICK ---------------- */
+  /* ================= INLINE BUTTON ================= */
   if (update.callback_query) {
     const chatId = update.callback_query.message.chat.id;
+    const callbackId = update.callback_query.id;
     const action = update.callback_query.data;
 
+    // ✅ FIRST: answer callback (MANDATORY)
+    const ack = {
+      method: "answerCallbackQuery",
+      callback_query_id: callbackId,
+    };
+
+    // ✅ SECOND: actual logic
+    let response;
+
     if (action === "START_READING") {
-      return await startReading(chatId, env);
+      response = await startReading(chatId, env);
     }
 
-    if (action === "STOP_READING") {
-      return await stopReading(chatId, env);
+    else if (action === "STOP_READING") {
+      response = await stopReading(chatId, env);
     }
 
-    if (action === "DAILY_TEST") {
-      return {
+    else if (action === "DAILY_TEST") {
+      response = {
         method: "sendMessage",
         chat_id: chatId,
-        text: "📝 Daily Test feature coming next 🚀",
+        text: "📝 Daily Test will start soon ⏳",
       };
     }
 
-    if (action === "MCQ_PRACTICE") {
-      return {
+    else if (action === "MCQ_PRACTICE") {
+      response = {
         method: "sendMessage",
         chat_id: chatId,
-        text: "✏️ MCQ Practice activated soon 📚",
+        text: "✏️ MCQ Practice mode coming next 📚",
       };
     }
 
-    if (action === "MY_PROGRESS") {
-      return {
+    else if (action === "MY_PROGRESS") {
+      response = {
         method: "sendMessage",
         chat_id: chatId,
-        text: "📊 Progress tracking will be shown here 📈",
+        text: "📊 Your progress will appear here 📈",
       };
     }
 
-    if (action === "SUBJECT_LIST") {
-      return {
+    else if (action === "SUBJECT_LIST") {
+      response = {
         method: "sendMessage",
         chat_id: chatId,
-        text: "📚 Subject list loading soon 🦷",
+        text: "📚 Subject list loading… 🦷",
       };
     }
+
+    // ⚠️ Cloudflare Worker can return ONLY ONE response
+    // So we return MESSAGE, and Telegram auto-accepts callback
+    return response || ack;
   }
 
-  /* ---------------- FALLBACK ---------------- */
-  return {
-    ok: true,
-  };
-  }
+  return { ok: true };
+}
