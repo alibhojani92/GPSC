@@ -1,33 +1,86 @@
-// command.router.js
-
-import { startReading, stopReading } from "./services/reading.service.js";
+import { startReading, stopReading } from "./reading.service.js";
 
 export async function handleCommand(update, env) {
-  const message = update.message || update.callback_query?.message;
-  const data = update.callback_query?.data;
-  const user = message.from;
+  /* ---------------- MESSAGE (/start) ---------------- */
+  if (update.message) {
+    const chatId = update.message.chat.id;
+    const text = update.message.text || "";
 
-  // 🎯 INLINE BUTTON HANDLING
-  if (data === "START_READING") {
-    return startReading(user);
+    if (text === "/start") {
+      return {
+        method: "sendMessage",
+        chat_id: chatId,
+        text:
+          "👋 Welcome Dr Arzoo Fatema ❤️🌺\n\n" +
+          "USE Me to Prepare GPSC Exam 🦷📚",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "📖 Start Reading", callback_data: "START_READING" },
+              { text: "⏹ Stop Reading", callback_data: "STOP_READING" },
+            ],
+            [
+              { text: "📝 Daily Test", callback_data: "DAILY_TEST" },
+              { text: "✏️ MCQ Practice", callback_data: "MCQ_PRACTICE" },
+            ],
+            [
+              { text: "📊 My Progress", callback_data: "MY_PROGRESS" },
+              { text: "📚 Subject List", callback_data: "SUBJECT_LIST" },
+            ],
+          ],
+        },
+      };
+    }
   }
 
-  if (data === "STOP_READING") {
-    return stopReading(user);
+  /* ---------------- INLINE BUTTON CLICK ---------------- */
+  if (update.callback_query) {
+    const chatId = update.callback_query.message.chat.id;
+    const action = update.callback_query.data;
+
+    if (action === "START_READING") {
+      return await startReading(chatId, env);
+    }
+
+    if (action === "STOP_READING") {
+      return await stopReading(chatId, env);
+    }
+
+    if (action === "DAILY_TEST") {
+      return {
+        method: "sendMessage",
+        chat_id: chatId,
+        text: "📝 Daily Test feature coming next 🚀",
+      };
+    }
+
+    if (action === "MCQ_PRACTICE") {
+      return {
+        method: "sendMessage",
+        chat_id: chatId,
+        text: "✏️ MCQ Practice activated soon 📚",
+      };
+    }
+
+    if (action === "MY_PROGRESS") {
+      return {
+        method: "sendMessage",
+        chat_id: chatId,
+        text: "📊 Progress tracking will be shown here 📈",
+      };
+    }
+
+    if (action === "SUBJECT_LIST") {
+      return {
+        method: "sendMessage",
+        chat_id: chatId,
+        text: "📚 Subject list loading soon 🦷",
+      };
+    }
   }
 
-  // 🏠 DEFAULT START
-  if (message.text === "/start") {
-    return {
-      text:
-        "👋 *Welcome Dr Arzoo Fatema* ❤️🌺\n\n" +
-        "🎯 *USE Me to Prepare GPSC Exam*\n\n" +
-        "👇 Choose an option below",
-      parse_mode: "Markdown",
-    };
-  }
-
+  /* ---------------- FALLBACK ---------------- */
   return {
-    text: "⚠️ Unknown command",
+    ok: true,
   };
-}
+  }
