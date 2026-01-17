@@ -7,7 +7,7 @@ export default {
   async fetch(request, env, ctx) {
     const ENV = getEnv(env);
 
-    // Health check (browser / uptime monitor)
+    // ✅ Health check
     if (request.method === "GET") {
       return new Response(
         JSON.stringify({
@@ -19,7 +19,7 @@ export default {
       );
     }
 
-    // Telegram always sends POST
+    // Telegram only sends POST
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405 });
     }
@@ -27,29 +27,28 @@ export default {
     let update;
     try {
       update = await request.json();
-    } catch (err) {
+    } catch {
       return new Response("Invalid JSON", { status: 400 });
     }
 
     try {
-      // Inline keyboard callbacks
+      // ✅ INLINE KEYBOARD
       if (update.callback_query) {
-        await handleCallback(update.callback_query, ENV);
+        await handleCallback(update, ENV);   // ✅ FIXED
         return new Response("OK");
       }
 
-      // Normal messages & commands
+      // ✅ COMMANDS & MESSAGES
       if (update.message) {
-        await handleCommand(update.message, ENV);
+        await handleCommand(update, ENV);    // ✅ FIXED
         return new Response("OK");
       }
 
-      // Other update types ignored safely
       return new Response("IGNORED");
     } catch (error) {
       console.error("Worker Error:", error);
 
-      // Notify admin if possible
+      // Notify admin safely
       if (ENV.ADMIN_ID) {
         try {
           await sendMessage(
@@ -57,7 +56,7 @@ export default {
             ENV.ADMIN_ID,
             "⚠️ Bot Error\n\n" + (error.message || "Unknown error")
           );
-        } catch (_) {}
+        } catch {}
       }
 
       return new Response("Internal Error", { status: 500 });
