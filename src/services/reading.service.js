@@ -1,15 +1,15 @@
-export async function startReading(chatId, env) {
+export async function startReading(chatId) {
   return {
     method: "sendMessage",
     chat_id: chatId,
-    text: "📖 Reading STARTED\n\n⏱ Daily study tracking is now ON ✅",
+    text: "📖 Reading STARTED ✅\n⏱ Time tracking ON",
   };
 }
 
-export async function stopReading(chatId, env) {
+export async function stopReading(chatId) {
   return {
     method: "sendMessage",
     chat_id: chatId,
-    text: "⏸ Reading STOPPED\n\n🧠 You can resume anytime ✅",
+    text: "⏸ Reading STOPPED ✅\nTake rest & resume later",
   };
 }
