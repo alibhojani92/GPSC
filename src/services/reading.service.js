@@ -1,60 +1,109 @@
-// src/services/reading.service.js
+export class ReadingService {
+  constructor(env) {
+    this.env = env;
+    this.db = env.DB;
+    this.kv = env.STATE_KV;
+  }
 
-export async function startReading(userId, env) {
-  const now = new Date().toISOString();
+  // =========================
+  // START READING
+  // =========================
+  async startReading(userId) {
+    const kvKey = `reading:${userId}`;
 
-  // Save temporary state in KV
-  await env.KV.put(
-    `reading:${userId}`,
-    JSON.stringify({ start_time: now })
-  );
+    // Prevent double start
+    const existing = await this.kv.get(kvKey, "json");
+    if (existing?.active) {
+      return {
+        text: "📚 Reading already STARTED ✅",
+      };
+    }
 
-  return {
-    text: "📖 Reading STARTED ✅\n⏱️ Time tracking ON",
-  };
-}
+    const startTime = Date.now();
 
-export async function stopReading(userId, env) {
-  const key = `reading:${userId}`;
-  const state = await env.KV.get(key, { type: "json" });
+    // Save to KV (live state)
+    await this.kv.put(
+      kvKey,
+      JSON.stringify({
+        active: true,
+        startTime,
+      })
+    );
 
-  if (!state || !state.start_time) {
+    // Save to D1 (permanent)
+    await this.db
+      .prepare(
+        `INSERT INTO reading_sessions (user_id, start_time)
+         VALUES (?, datetime('now'))`
+      )
+      .bind(userId)
+      .run();
+
     return {
-      text: "⚠️ Reading not active.\nStart reading first 📖",
+      text: "📖 Reading STARTED ✅\n⏱️ Time tracking ON",
     };
   }
 
-  const startTime = new Date(state.start_time);
-  const endTime = new Date();
-  const durationSeconds = Math.floor(
-    (endTime.getTime() - startTime.getTime()) / 1000
-  );
+  // =========================
+  // STOP READING
+  // =========================
+  async stopReading(userId) {
+    const kvKey = `reading:${userId}`;
 
-  // Save permanent record in D1
-  await env.DB.prepare(
-    `
-    INSERT INTO reading_sessions (user_id, start_time, end_time, duration)
-    VALUES (?, ?, ?, ?)
-    `
-  )
-    .bind(
-      userId,
-      startTime.toISOString(),
-      endTime.toISOString(),
-      durationSeconds
-    )
-    .run();
-
-  // Clear KV state
-  await env.KV.delete(key);
-
-  const minutes = Math.floor(durationSeconds / 60);
-  const seconds = durationSeconds % 60;
-
-  return {
-    text:
-      "⏸️ Reading STOPPED ✅\n" +
-      `🕒 Duration: ${minutes}m ${seconds}s\n` +
-      "💾 Progress saved",
-  };
+    const state = await this.kv.get(kvKey, "json");
+    if (!state?.active) {
+      return {
+        text: "⏸️ Reading is not active",
+      };
     }
+
+    const endTime = Date.now();
+    const durationSeconds = Math.floor(
+      (endTime - state.startTime) / 1000
+    );
+
+    // Update last open session
+    await this.db
+      .prepare(
+        `UPDATE reading_sessions
+         SET end_time = datetime('now'),
+             duration = ?
+         WHERE user_id = ?
+         AND end_time IS NULL`
+      )
+      .bind(durationSeconds, userId)
+      .run();
+
+    // Clear KV
+    await this.kv.delete(kvKey);
+
+    return {
+      text:
+        "⏹️ Reading STOPPED ✅\n" +
+        `🕒 Duration: ${Math.floor(durationSeconds / 60)} min`,
+    };
+  }
+
+  // =========================
+  // CHECK STATUS
+  // =========================
+  async getStatus(userId) {
+    const kvKey = `reading:${userId}`;
+    const state = await this.kv.get(kvKey, "json");
+
+    if (!state?.active) {
+      return {
+        active: false,
+      };
+    }
+
+    const elapsed = Math.floor(
+      (Date.now() - state.startTime) / 1000
+    );
+
+    return {
+      active: true,
+      elapsed,
+    };
+  }
+}
