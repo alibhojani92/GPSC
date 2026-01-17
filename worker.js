@@ -1,6 +1,6 @@
 // worker.js
-import { handleCommand } from "./router/command.router";
-import { handleCallback } from "./router/callback.router";
+import { handleCommand } from "./router/command.router.js";
+import { handleCallback } from "./router/callback.router.js";
 
 export default {
   async fetch(request, env, ctx) {
