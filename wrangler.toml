@@ -1,5 +1,4 @@
 name = "gpsc-v2"
-main = "worker.js"
 compatibility_date = "2024-09-01"
 
 # ⛔ DO NOT set main here (worker.js is default)
