@@ -5,40 +5,38 @@ import {
 } from "../repos/reading.repo";
 import { sendMessage } from "../utils/telegram";
 
-const DAILY_TARGET_MIN = 8 * 60; // 8 hours
+const DAILY_TARGET = 8 * 60; // minutes
 
-function formatTime(ts) {
+function time(ts) {
   return new Date(ts).toLocaleTimeString("en-IN", {
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-function formatDuration(mins) {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
+function dur(min) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
   return `${h}h ${m}m`;
 }
 
 export async function startReading(chatId, env) {
-  const started = await startSession(env, chatId);
+  const session = await startSession(env, chatId);
 
-  if (!started) {
-    await sendMessage(
-      env,
-      chatId,
-      "⚠️ Reading already in progress 📖"
-    );
+  if (!session) {
+    await sendMessage(env, chatId, "⚠️ Reading already in progress 📖");
     return new Response("OK");
   }
 
-  const text =
+  await sendMessage(
+    env,
+    chatId,
 `📚 Reading STARTED ✅
-🕒 Start Time: ${formatTime(Date.now())}
+🕒 Start Time: ${time(session.start_time)}
 🎯 Daily Target: 8 Hours
-🔥 Keep going Doctor 💪🦷`;
+🔥 Keep going Doctor 💪🦷`
+  );
 
-  await sendMessage(env, chatId, text);
   return new Response("OK");
 }
 
@@ -46,29 +44,27 @@ export async function stopReading(chatId, env) {
   const session = await stopSession(env, chatId);
 
   if (!session) {
-    await sendMessage(
-      env,
-      chatId,
-      "⚠️ No active reading session found"
-    );
+    await sendMessage(env, chatId, "⚠️ No active reading session");
     return new Response("OK");
   }
 
-  const todayTotal = await getTodayTotal(env, chatId);
-  const remaining = Math.max(DAILY_TARGET_MIN - todayTotal, 0);
+  const total = await getTodayTotal(env, chatId);
+  const remaining = Math.max(DAILY_TARGET - total, 0);
 
-  const text =
+  await sendMessage(
+    env,
+    chatId,
 `⏸ Reading STOPPED ✅
 
-🕒 Start: ${formatTime(session.start_time)}
-🕒 End: ${formatTime(session.end_time)}
-⏱ Duration: ${formatDuration(session.duration)}
+🕒 Start: ${time(session.start_time)}
+🕒 End: ${time(session.end_time)}
+⏱ Duration: ${dur(session.duration)}
 
-📊 Today Total: ${formatDuration(todayTotal)}
-🎯 Target Left: ${formatDuration(remaining)}
+📊 Today Total: ${dur(total)}
+🎯 Target Left: ${dur(remaining)}
 
-🌟 Consistency beats intensity!`;
+🌟 Consistency beats intensity!`
+  );
 
-  await sendMessage(env, chatId, text);
   return new Response("OK");
 }
