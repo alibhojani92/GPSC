@@ -1,62 +1,55 @@
-// src/services/reading.service.js
-// A.E.2 – Start Reading (LOGIC ONLY, NO KV/D1) 📖🧠
+// services/reading.service.js
 
-import { sendMessage } from "../utils/telegram.js";
+const readingSessions = new Map(); // in-memory (userId -> session)
 
-/**
- * Temporary in-memory tracker
- * ⚠️ This will be replaced by KV/D1 later
- */
-const readingSessions = new Map();
+export function startReading(user) {
+  const userId = user.id;
 
-/**
- * Start Reading Handler
- * @param {Object} update - Telegram update
- * @param {Object} env - Cloudflare env
- */
-export async function startReading(update, env) {
-  const message = update.message;
-  const chatId = message.chat.id;
-  const userName =
-    message.from.first_name ||
-    message.from.username ||
-    "Doctor";
-
-  // 🛑 If already reading
-  if (readingSessions.has(chatId)) {
-    return sendMessage(env, chatId,
-      "📖 You are already in *Reading Mode* ✅\n\n" +
-      "⏳ Stay consistent, Doctor!\n" +
-      "Use ⏹ *Stop Reading* when you want to pause.",
-      { parse_mode: "Markdown" }
-    );
+  // 🔒 Already reading
+  if (readingSessions.has(userId)) {
+    return {
+      text: "⚠️ You already started reading 📖\n\n🛑 Use *STOP READING* to finish.",
+      parse_mode: "Markdown",
+    };
   }
 
-  // ▶️ Start reading
-  const startedAt = new Date().toISOString();
+  const startTime = new Date();
 
-  readingSessions.set(chatId, {
-    startedAt,
-    subject: null, // will be added later
+  readingSessions.set(userId, {
+    startTime,
   });
 
-  // 🎉 Welcome message
-  const text =
-    `👋 *Welcome Dr. ${userName}* ❤️🌺\n\n` +
-    `📖 *Reading Session Started!* ✅\n\n` +
-    `⏱ Start Time: ${new Date().toLocaleTimeString("en-IN")}\n\n` +
-    `🧠 Stay focused. Small steps daily = BIG success.\n\n` +
-    `👉 When done, tap *Stop Reading* ⏹`;
-
-  return sendMessage(env, chatId, text, {
+  return {
+    text:
+      "📖 *Reading Started Successfully!* ✅\n\n" +
+      `⏱ Start Time: *${startTime.toLocaleTimeString()}*\n\n` +
+      "🧠 Stay focused!\n🛑 Press *STOP READING* when you finish.",
     parse_mode: "Markdown",
-  });
+  };
 }
 
-/**
- * Utility (TEMP) – used only for testing/debug
- * Will be removed once KV/D1 is added
- */
-export function _debugGetReadingSessions() {
-  return readingSessions;
+export function stopReading(user) {
+  const userId = user.id;
+
+  if (!readingSessions.has(userId)) {
+    return {
+      text: "⚠️ No active reading session found.\n\n📖 Press *START READING* first.",
+      parse_mode: "Markdown",
+    };
+  }
+
+  const session = readingSessions.get(userId);
+  const endTime = new Date();
+  const durationMs = endTime - session.startTime;
+  const minutes = Math.floor(durationMs / 60000);
+
+  readingSessions.delete(userId);
+
+  return {
+    text:
+      "✅ *Reading Stopped!* 📕\n\n" +
+      `⏱ Total Time: *${minutes} minutes*\n\n` +
+      "👏 Great job! Consistency is key 💪",
+    parse_mode: "Markdown",
+  };
 }
