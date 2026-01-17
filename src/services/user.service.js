@@ -1,67 +1,38 @@
-// User Service
-// Handles: user initialization, role detection, profile snapshot
+import { saveUserIfNotExists } from "../repos/user.repo";
+import { sendMessage } from "../utils/telegram";
 
-import { UserRepository } from "../repositories/user.repo.js";
-import { logger } from "./logger.js";
+export async function handleStart(update, env) {
+  const chatId = update.message.chat.id;
+  const name = update.message.from.first_name || "Doctor";
 
-export class UserService {
-  constructor(env) {
-    this.env = env;
-    this.userRepo = new UserRepository(env);
-  }
+  await saveUserIfNotExists(env, {
+    id: update.message.from.id,
+    name,
+  });
 
-  /**
-   * Ensure user exists (idempotent)
-   */
-  async ensureUser(user) {
-    const existing = await this.userRepo.getById(user.id);
-    if (existing) return existing;
+  const text =
+`👋 Welcome Dr ${name} ❤️🌺
 
-    const profile = {
-      id: user.id,
-      username: user.username || null,
-      firstName: user.first_name || "",
-      lastName: user.last_name || "",
-      role: this._resolveRole(user.id),
-      createdAt: new Date().toISOString(),
-      lastActiveAt: new Date().toISOString()
-    };
+USE Me to Prepare GPSC Exam 🦷📚`;
 
-    await this.userRepo.create(profile);
-    logger.info("User created", { userId: user.id });
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: "📖 Start Reading", callback_data: "START_READING" },
+        { text: "⏸ Stop Reading", callback_data: "STOP_READING" },
+      ],
+      [
+        { text: "📝 Daily Test", callback_data: "DAILY_TEST" },
+        { text: "✏️ MCQ Practice", callback_data: "MCQ_PRACTICE" },
+      ],
+      [
+        { text: "📊 My Progress", callback_data: "MY_PROGRESS" },
+        { text: "📚 Subject List", callback_data: "SUBJECT_LIST" },
+      ],
+    ],
+  };
 
-    return profile;
-  }
+  await sendMessage(env, chatId, text, keyboard);
 
-  /**
-   * Update last active timestamp
-   */
-  async touch(userId) {
-    await this.userRepo.updateLastActive(userId, new Date().toISOString());
-  }
-
-  /**
-   * Snapshot helper (used in reports/advice later)
-   */
-  async getSnapshot(userId) {
-    const user = await this.userRepo.getById(userId);
-    if (!user) return null;
-
-    return {
-      id: user.id,
-      role: user.role,
-      joined: user.createdAt,
-      lastActive: user.lastActiveAt
-    };
-  }
-
-  /* ================= Helpers ================= */
-
-  _resolveRole(userId) {
-    // NOTE: admin IDs injected later via env/config
-    if (this.env.ADMIN_IDS && this.env.ADMIN_IDS.includes(String(userId))) {
-      return "admin";
-    }
-    return "student";
-  }
-      }
+  return new Response("OK ✅");
+}
